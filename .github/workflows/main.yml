@@ -1,4 +1,4 @@
-name: RDP-Gdrive-Final-Fix
+name: RDP-Gdrive-Fixed-IP
 
 on:
   workflow_dispatch:
@@ -32,7 +32,6 @@ jobs:
 
       - name: Configure Rclone (Safe Path)
         run: |
-          # Creiamo una cartella dedicata con pieni permessi
           $rcloneDir = "C:\rclone_data"
           if (!(Test-Path $rcloneDir)) { New-Item -ItemType Directory -Path $rcloneDir }
           $configContent = @"
@@ -40,12 +39,12 @@ jobs:
           "@
           $configPath = Join-Path $rcloneDir "rclone.conf"
           Set-Content -Path $configPath -Value $configContent
-          # Diamo i permessi a chiunque di scrivere in questa cartella
           icacls $rcloneDir /grant "Everyone:(OI)(CI)F" /T
 
-      - name: Establish Tailscale Connection
+      - name: Establish Tailscale Connection (Fixed Hostname)
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win
+          # Usiamo un hostname fisso. Tailscale assegnerà lo stesso IP a questo nome.
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-fisso --accept-routes
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
@@ -60,58 +59,16 @@ jobs:
           @echo off
           echo AVVIO GOOGLE DRIVE (Z:)...
           taskkill /f /im rclone.exe >nul 2>&1
-          :: Puntiamo al nuovo percorso del config con permessi di scrittura
+          :: Puntiamo alla cartella sbloccata C:\rclone_data
           start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone_data\rclone.conf" --vfs-cache-max-size 2G
-          echo Attendere 15 secondi...
+          echo Attendere 15 secondi per il montaggio...
           timeout /t 15
-          if exist Z:\ ( explorer Z: ) else ( echo ERRORE: Disco Z non apparso. )
-          exit
-          "@
-                  Set-Content -Path $batPath -Value $batContent
-                  icacls $batPath /grant "Everyone:(F)"
-              }
-          }
-
-      - name: Maintain Connection
-        run: |
-          Write-Host "IP: $env:TAILSCALE_IP | Pass: $env:RDP_PASS"
-          while ($true) { Start-Sleep -Seconds 300 }
-          ${{ secrets.RCLONE_CONFIG_CONTENT }}
-          "@
-          # Salviamo il config in una posizione accessibile a tutti
-          $sharedConfigPath = "C:\rclone.conf"
-          Set-Content -Path $sharedConfigPath -Value $configContent
-          icacls $sharedConfigPath /grant "Everyone:(R,W)"
-
-      - name: Establish Tailscale Connection
-        run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win
-          $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-      - name: Setup Cloud Mounter on ALL Desktops
-        run: |
-          # Cerchiamo tutti i desktop presenti nel sistema
-          $userProfiles = Get-ChildItem "C:\Users"
-          
-          foreach ($profile in $userProfiles) {
-              $desktopPath = Join-Path $profile.FullName "Desktop"
-              if (Test-Path $desktopPath) {
-                  $batPath = Join-Path $desktopPath "ATTIVA-GOOGLE-DRIVE.bat"
-                  $batContent = @"
-          @echo off
-          echo ===========================================
-          echo AVVIO COLLEGAMENTO GOOGLE DRIVE (Z:)
-          echo ===========================================
-          taskkill /f /im rclone.exe >nul 2>&1
-          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone.conf"
-          echo Attendere 15 secondi...
-          timeout /t 15
-          if exist Z:\ (
-              explorer Z:
-          ) else (
-              echo ERRORE: Disco Z non apparso. Controlla i segreti di GitHub.
-              pause
+          if exist Z:\ ( 
+              echo SUCCESSO! Apertura disco Z...
+              explorer Z: 
+          ) else ( 
+              echo ERRORE: Disco Z non apparso. Riprova.
+              pause 
           )
           exit
           "@
@@ -123,12 +80,8 @@ jobs:
       - name: Maintain Connection
         run: |
           Write-Host "`n==============================="
-          Write-Host " ACCESSO RDP PRONTO"
-          Write-Host " IP TAILSCALE: $env:TAILSCALE_IP"
+          Write-Host " INDIRIZZO IP FISSO: $env:TAILSCALE_IP"
+          Write-Host " NOME HOST: gh-runner-fisso"
           Write-Host " PASSWORD: $env:RDP_PASS"
           Write-Host "==============================="
-          Write-Host " Cerca il file 'ATTIVA-GOOGLE-DRIVE' sul Desktop e avvialo."
-          
-          while ($true) {
-              Start-Sleep -Seconds 300
-          }
+          while ($true) { Start-Sleep -Seconds Aperturara
