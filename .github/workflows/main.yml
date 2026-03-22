@@ -1,4 +1,4 @@
-name: RDP-Gdrive-Fixed-Machine
+name: RDP-Gdrive-Fixed-Final
 
 on:
   workflow_dispatch:
@@ -39,10 +39,10 @@ jobs:
           Set-Content -Path (Join-Path $rcloneDir "rclone.conf") -Value $configContent
           icacls $rcloneDir /grant "Everyone:(OI)(CI)F" /T
 
-      - name: Establish Tailscale Connection (Identity Fix)
+      - name: Establish Tailscale Connection (Fixed IP)
         run: |
-          # Forziamo il nome 'gh-runner-win' per usare sempre lo stesso slot nel tuo account
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win --accept-routes --reset
+          # --force-reauth riprende il posto della macchina 'gh-runner-win' esistente
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win --accept-routes --force-reauth
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
@@ -56,7 +56,8 @@ jobs:
           @echo off
           echo AVVIO GOOGLE DRIVE (Z:)...
           taskkill /f /im rclone.exe >nul 2>&1
-          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone_data\rclone.conf"
+          :: Aggiunto --links per evitare l'errore dello screenshot
+          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone_data\rclone.conf" --vfs-cache-max-size 2G --links
           timeout /t 15
           if exist Z:\ ( explorer Z: ) else ( echo ERRORE: Disco Z non apparso. )
           exit
@@ -67,5 +68,5 @@ jobs:
 
       - name: Maintain Connection
         run: |
-          Write-Host "IP: $env:TAILSCALE_IP (Dovrebbe essere sempre lo stesso)"
+          Write-Host "IP FISSO: $env:TAILSCALE_IP"
           while ($true) { Start-Sleep -Seconds 300 }
