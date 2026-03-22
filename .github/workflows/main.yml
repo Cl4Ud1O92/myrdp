@@ -1,4 +1,4 @@
-name: RDP-GoogleDrive
+name: RDP-GoogleDrive-Fixed
 
 on:
   workflow_dispatch:
@@ -6,44 +6,46 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360  # Il limite reale di GitHub è 6 ore (360 min)
+    timeout-minutes: 360  # Limite massimo di 6 ore per i runner gratuiti
 
     steps:
       - name: Configure Core RDP Settings
         run: |
+          # Abilita RDP e disabilita NLA per compatibilità
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          
+          # Regole Firewall
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User
         run: |
-          $password = "GitHubRDP123!" # Password fissa per semplicità nei test, cambiala se vuoi
+          # Password robusta per evitare l'errore InvalidPasswordException
+          $password = "Password-Gdrive-2026!" 
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -Description "RDP User"
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
-      - name: Install Tailscale, Rclone and WinFsp
+      - name: Install Tools (Tailscale, Rclone, WinFsp)
         run: |
-          # Installazione multipla via Chocolatey
+          # Installazione dei componenti necessari per il Cloud Drive
           choco install tailscale rclone winfsp -y
 
       - name: Configure Rclone
         run: |
-          # Configuriamo rclone per l'utente System e per l'utente RDP
-          $configPaths = @(
-            "$env:USERPROFILE\.config\rclone\rclone.conf",
-            "C:\Users\RDP\.config\rclone\rclone.conf"
-          )
-          foreach ($path in $configPaths) {
-            New-Item -ItemType Directory -Force -Path (Split-Path $path)
-            Set-Content -Path $path -Value @"
+          # Configurazione per entrambi gli utenti (System e RDP)
+          $configContent = @"
           ${{ secrets.RCLONE_CONFIG_CONTENT }}
           "@
+          $paths = @("$env:USERPROFILE\.config\rclone\rclone.conf", "C:\Users\RDP\.config\rclone\rclone.conf")
+          foreach ($path in $paths) {
+              New-Item -ItemType Directory -Force -Path (Split-Path $path)
+              Set-Content -Path $path -Value $configContent
           }
 
       - name: Establish Tailscale Connection
@@ -52,30 +54,29 @@ jobs:
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Mount Google Drive (Global Mode)
+      - name: Mount Google Drive
         run: |
-          # Creiamo un punto di mount che sia visibile all'utente RDP
-          # Usiamo l'opzione --dir-cache-time per velocizzare
-          Start-Process rclone -ArgumentList "mount", "cla:", "Z:", `
-            "--vfs-cache-mode", "full", `
-            "--vfs-cache-max-size", "2G", `
-            "--allow-other" -WindowStyle Hidden
+          # Avvio del mount in background
+          Start-Process rclone -ArgumentList "mount", "cla:", "Z:", "--vfs-cache-mode", "full", "--vfs-cache-max-size", "2G", "--allow-other" -WindowStyle Hidden
           
-          # Creiamo anche un link simbolico sul desktop dell'utente RDP come backup
-          Start-Sleep -Seconds 10
-          $desktopPath = "C:\Users\RDP\Desktop\GoogleDrive"
+          # Aspetta che il disco Z: sia pronto
+          Start-Sleep -Seconds 20
+          
+          # Creazione di un collegamento sul Desktop per l'utente RDP
+          $desktopPath = "C:\Users\RDP\Desktop\I-Miei-File-Cloud"
           New-Item -ItemType Junction -Path $desktopPath -Target "Z:\" -ErrorAction SilentlyContinue
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== DATI ACCESSO RDP ==="
-          Write-Host "IP Tailscale: $env:TAILSCALE_IP"
-          Write-Host "Utente: RDP"
-          Write-Host "Password: $env:RDP_PASS"
-          Write-Host "Disco Cloud: Z: (o cartella GoogleDrive sul Desktop)"
-          Write-Host "========================`n"
+          Write-Host "`n==============================="
+          Write-Host " ACCESSO RDP PRONTO"
+          Write-Host " IP: $env:TAILSCALE_IP"
+          Write-Host " Utente: RDP"
+          Write-Host " Password: $env:RDP_PASS"
+          Write-Host "==============================="
+          Write-Host " NOTA: Cerca la cartella 'I-Miei-File-Cloud' sul Desktop"
           
           while ($true) {
-              Write-Host "[$(Get-Date)] Runner Attivo... (Il disco Z: dovrebbe essere visibile)"
+              Write-Host "[$(Get-Date)] Runner in esecuzione... (Disco Z: attivo)"
               Start-Sleep -Seconds 300
           }
