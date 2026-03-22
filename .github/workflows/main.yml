@@ -1,4 +1,4 @@
-name: RDP-Gdrive-Fixed-Final
+name: RDP-Gdrive-Fixed-Final-v3
 
 on:
   workflow_dispatch:
@@ -39,34 +39,51 @@ jobs:
           Set-Content -Path (Join-Path $rcloneDir "rclone.conf") -Value $configContent
           icacls $rcloneDir /grant "Everyone:(OI)(CI)F" /T
 
-      - name: Establish Tailscale Connection (Fixed IP)
+      - name: Establish Tailscale Connection (Identity Force)
         run: |
-          # --force-reauth riprende il posto della macchina 'gh-runner-win' esistente
+          # Il flag --force-reauth e l'hostname fisso servono a mantenere l'IP costante.
+          # Assicurati di usare una Auth Key NON Ephemeral su Tailscale.
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win --accept-routes --force-reauth
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Setup Cloud Mounter on Desktop
+      - name: Setup Desktop Tools and Apps
         run: |
           $userProfiles = Get-ChildItem "C:\Users"
           foreach ($profile in $userProfiles) {
               $desktopPath = Join-Path $profile.FullName "Desktop"
               if (Test-Path $desktopPath) {
-                  $batContent = @"
-          @echo off
-          echo AVVIO GOOGLE DRIVE (Z:)...
-          taskkill /f /im rclone.exe >nul 2>&1
-          :: Aggiunto --links per evitare l'errore dello screenshot
-          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone_data\rclone.conf" --vfs-cache-max-size 2G --links
-          timeout /t 15
-          if exist Z:\ ( explorer Z: ) else ( echo ERRORE: Disco Z non apparso. )
-          exit
-          "@
+                  # 1. Script per attivare Google Drive (Z:)
+                  $batContent = "@echo off`ntaskkill /f /im rclone.exe >nul 2>&1`nstart /b """" ""rclone"" mount cla: Z: --vfs-cache-mode full --config ""C:\rclone_data\rclone.conf"" --vfs-cache-max-size 2G --links`ntimeout /t 15`nif exist Z:\ ( explorer Z: ) else ( echo Errore: Disco Z non trovato )`nexit"
                   Set-Content -Path (Join-Path $desktopPath "ATTIVA-GOOGLE-DRIVE.bat") -Value $batContent
+                  
+                  # 2. Link Google Antigravity
+                  $shell = New-Object -ComObject WScript.Shell
+                  $shortcut = $shell.CreateShortcut("$desktopPath\Google-Antigravity.lnk")
+                  $shortcut.TargetPath = "https://antigravity.google/"
+                  $shortcut.Save()
+
+                  # 3. FileZilla Portable (Download e link)
+                  $fzDir = "C:\FileZilla"
+                  if (!(Test-Path $fzDir)) { 
+                      New-Item -ItemType Directory -Path $fzDir
+                      Invoke-WebRequest -Uri "https://download.filezilla-project.org/client/FileZilla_3.66.5_win64.zip" -OutFile "$fzDir\fz.zip"
+                      Expand-Archive -Path "$fzDir\fz.zip" -DestinationPath $fzDir -Force
+                  }
+                  $fzLnk = $shell.CreateShortcut("$desktopPath\FileZilla.lnk")
+                  $fzLnk.TargetPath = "$fzDir\FileZilla.exe"
+                  $fzLnk.Save()
+                  
+                  # Permessi totali ai file sul desktop
+                  icacls $desktopPath /grant "Everyone:(F)" /T
               }
           }
 
       - name: Maintain Connection
         run: |
-          Write-Host "IP FISSO: $env:TAILSCALE_IP"
+          Write-Host "`n==============================="
+          Write-Host " IP FISSO: $env:TAILSCALE_IP"
+          Write-Host " UTENTE: RDP"
+          Write-Host " PASS: $env:RDP_PASS"
+          Write-Host "==============================="
           while ($true) { Start-Sleep -Seconds 300 }
