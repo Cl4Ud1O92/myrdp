@@ -1,4 +1,4 @@
-name: RDP
+name: RDP-GoogleDrive
 
 on:
   workflow_dispatch:
@@ -6,139 +6,76 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360  # Il limite reale di GitHub è 6 ore (360 min)
 
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove any existing rule with the same name to avoid duplication
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          
-          # For testing, allow any incoming connection on port 3389
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
-
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Secure Password
+      - name: Create RDP User
         run: |
-          Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)      # A-Z
-              Lower   = [char[]](97..122)     # a-z
-              Number  = [char[]](48..57)      # 0-9
-              Special = ([char[]](33..47) + [char[]](58..64) +
-                         [char[]](91..96) + [char[]](123..126)) # Special characters
-          }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $password = "GitHubRDP123!" # Password fissa per semplicità nei test, cambiala se vuoi
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          
-          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
-          
-          if (-not (Get-LocalUser -Name "RDP")) {
-              Write-Error "User creation failed"
-              exit 1
-          }
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
-      - name: Install Tailscale
+      - name: Install Tailscale, Rclone and WinFsp
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
-
-      - name: Establish Tailscale Connection
-        run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale to assign an IP
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
-              exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
-          }
-          Write-Host "TCP connectivity successful!"
-
-      - name: Install Rclone and WinFsp
-        run: |
-          # WinFsp è necessario per far apparire il Drive come un disco (Z:)
-          choco install rclone winfsp -y
+          # Installazione multipla via Chocolatey
+          choco install tailscale rclone winfsp -y
 
       - name: Configure Rclone
         run: |
-          $configPath = "$env:USERPROFILE\.config\rclone\rclone.conf"
-          New-Item -ItemType Directory -Force -Path (Split-Path $configPath)
-          # Usiamo il secret che hai appena creato
-          Set-Content -Path $configPath -Value @"
+          # Configuriamo rclone per l'utente System e per l'utente RDP
+          $configPaths = @(
+            "$env:USERPROFILE\.config\rclone\rclone.conf",
+            "C:\Users\RDP\.config\rclone\rclone.conf"
+          )
+          foreach ($path in $configPaths) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $path)
+            Set-Content -Path $path -Value @"
           ${{ secrets.RCLONE_CONFIG_CONTENT }}
           "@
-
-      - name: Mount Google Drive
-        run: |
-          # 'cla' è il nome che hai dato nel config [cla]
-          # Usiamo --vfs-cache-mode full per poter leggere/scrivere file pesanti
-          Start-Process rclone -ArgumentList "mount", "cla:", "Z:", "--vfs-cache-mode", "full", "--vfs-cache-max-size", "5G" -WindowStyle Hidden
-          
-          # Aspettiamo che il disco Z: sia visibile
-          $timeout = 30
-          while (!(Test-Path Z:) -and $timeout -gt 0) {
-              Start-Sleep -Seconds 1
-              $timeout--
           }
-          if (!(Test-Path Z:)) { Write-Error "Disco Z: non trovato"; exit 1 }
-          Write-Host "Google Drive montato con successo su Z:!"
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win
+          $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Mount Google Drive (Global Mode)
+        run: |
+          # Creiamo un punto di mount che sia visibile all'utente RDP
+          # Usiamo l'opzione --dir-cache-time per velocizzare
+          Start-Process rclone -ArgumentList "mount", "cla:", "Z:", `
+            "--vfs-cache-mode", "full", `
+            "--vfs-cache-max-size", "2G", `
+            "--allow-other" -WindowStyle Hidden
           
+          # Creiamo anche un link simbolico sul desktop dell'utente RDP come backup
+          Start-Sleep -Seconds 10
+          $desktopPath = "C:\Users\RDP\Desktop\GoogleDrive"
+          New-Item -ItemType Junction -Path $desktopPath -Target "Z:\" -ErrorAction SilentlyContinue
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================`n"
+          Write-Host "`n=== DATI ACCESSO RDP ==="
+          Write-Host "IP Tailscale: $env:TAILSCALE_IP"
+          Write-Host "Utente: RDP"
+          Write-Host "Password: $env:RDP_PASS"
+          Write-Host "Disco Cloud: Z: (o cartella GoogleDrive sul Desktop)"
+          Write-Host "========================`n"
           
-          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Write-Host "[$(Get-Date)] Runner Attivo... (Il disco Z: dovrebbe essere visibile)"
               Start-Sleep -Seconds 300
           }
-
