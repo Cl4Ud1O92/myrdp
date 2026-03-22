@@ -37,9 +37,8 @@ jobs:
           ${{ secrets.RCLONE_CONFIG_CONTENT }}
           "@
           $configPath = "C:\Users\RDP\.config\rclone\rclone.conf"
-          New-Item -ItemType Directory -Force -Path (Split-Path $configPath)
+          if (!(Test-Path (Split-Path $configPath))) { New-Item -ItemType Directory -Force -Path (Split-Path $configPath) }
           Set-Content -Path $configPath -Value $configContent
-          # Permessi di lettura per l'utente RDP sul file config
           icacls $configPath /grant "RDP:(R,W)"
 
       - name: Establish Tailscale Connection
@@ -50,8 +49,10 @@ jobs:
 
       - name: Setup Cloud Mounter on Desktop
         run: |
-          # Creiamo uno script .bat sul desktop dell'utente RDP
-          # Questo script verrà eseguito MANUALMENTE da te in RDP
+          # FORZIAMO la creazione della cartella Desktop per l'utente RDP
+          $desktopPath = "C:\Users\RDP\Desktop"
+          if (!(Test-Path $desktopPath)) { New-Item -ItemType Directory -Force -Path $desktopPath }
+          
           $batPath = "C:\Users\RDP\Desktop\ATTIVA-GOOGLE-DRIVE.bat"
           $batContent = @"
           @echo off
@@ -72,6 +73,8 @@ jobs:
           exit
           "@
           Set-Content -Path $batPath -Value $batContent
+          # Assicuriamoci che l'utente RDP possa vedere il file
+          icacls $batPath /grant "RDP:(F)"
 
       - name: Maintain Connection
         run: |
@@ -81,10 +84,10 @@ jobs:
           Write-Host " Utente: RDP"
           Write-Host " Password: $env:RDP_PASS"
           Write-Host "==============================="
-          Write-Host " IMPORTANTE: Una volta dentro, fai doppio click sul file"
-          Write-Host " 'ATTIVA-GOOGLE-DRIVE' che trovi sul Desktop."
+          Write-Host " Una volta dentro, fai doppio click su 'ATTIVA-GOOGLE-DRIVE' sul Desktop."
           
           while ($true) {
-              Write-Host "[$(Get-Date)] Runner in esecuzione..."
               Start-Sleep -Seconds 300
+          }
+s 300
           }
