@@ -1,4 +1,4 @@
-name: RDP-GoogleDrive-Fixed
+name: RDP-Gdrive-Final-Edition
 
 on:
   workflow_dispatch:
@@ -6,24 +6,20 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360  # Limite massimo di 6 ore per i runner gratuiti
+    timeout-minutes: 360
 
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Abilita RDP e disabilita NLA per compatibilità
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          
-          # Regole Firewall
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User
         run: |
-          # Password robusta per evitare l'errore InvalidPasswordException
           $password = "Password-Gdrive-2026!" 
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -Description "RDP User"
@@ -33,20 +29,18 @@ jobs:
 
       - name: Install Tools (Tailscale, Rclone, WinFsp)
         run: |
-          # Installazione dei componenti necessari per il Cloud Drive
           choco install tailscale rclone winfsp -y
 
-      - name: Configure Rclone
+      - name: Configure Rclone for User RDP
         run: |
-          # Configurazione per entrambi gli utenti (System e RDP)
           $configContent = @"
           ${{ secrets.RCLONE_CONFIG_CONTENT }}
           "@
-          $paths = @("$env:USERPROFILE\.config\rclone\rclone.conf", "C:\Users\RDP\.config\rclone\rclone.conf")
-          foreach ($path in $paths) {
-              New-Item -ItemType Directory -Force -Path (Split-Path $path)
-              Set-Content -Path $path -Value $configContent
-          }
+          $configPath = "C:\Users\RDP\.config\rclone\rclone.conf"
+          New-Item -ItemType Directory -Force -Path (Split-Path $configPath)
+          Set-Content -Path $configPath -Value $configContent
+          # Permessi di lettura per l'utente RDP sul file config
+          icacls $configPath /grant "RDP:(R,W)"
 
       - name: Establish Tailscale Connection
         run: |
@@ -54,17 +48,30 @@ jobs:
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Mount Google Drive
+      - name: Setup Cloud Mounter on Desktop
         run: |
-          # Avvio del mount in background
-          Start-Process rclone -ArgumentList "mount", "cla:", "Z:", "--vfs-cache-mode", "full", "--vfs-cache-max-size", "2G", "--allow-other" -WindowStyle Hidden
-          
-          # Aspetta che il disco Z: sia pronto
-          Start-Sleep -Seconds 20
-          
-          # Creazione di un collegamento sul Desktop per l'utente RDP
-          $desktopPath = "C:\Users\RDP\Desktop\I-Miei-File-Cloud"
-          New-Item -ItemType Junction -Path $desktopPath -Target "Z:\" -ErrorAction SilentlyContinue
+          # Creiamo uno script .bat sul desktop dell'utente RDP
+          # Questo script verrà eseguito MANUALMENTE da te in RDP
+          $batPath = "C:\Users\RDP\Desktop\ATTIVA-GOOGLE-DRIVE.bat"
+          $batContent = @"
+          @echo off
+          echo ===========================================
+          echo AVVIO COLLEGAMENTO GOOGLE DRIVE (Z:)
+          echo ===========================================
+          taskkill /f /im rclone.exe >nul 2>&1
+          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\Users\RDP\.config\rclone\rclone.conf"
+          echo Attendere 10 secondi per il caricamento...
+          timeout /t 10
+          if exist Z:\ (
+              echo SUCCESSO! Apertura disco Z...
+              explorer Z:
+          ) else (
+              echo ERRORE: Il disco Z non e' apparso. Riprova.
+              pause
+          )
+          exit
+          "@
+          Set-Content -Path $batPath -Value $batContent
 
       - name: Maintain Connection
         run: |
@@ -74,9 +81,10 @@ jobs:
           Write-Host " Utente: RDP"
           Write-Host " Password: $env:RDP_PASS"
           Write-Host "==============================="
-          Write-Host " NOTA: Cerca la cartella 'I-Miei-File-Cloud' sul Desktop"
+          Write-Host " IMPORTANTE: Una volta dentro, fai doppio click sul file"
+          Write-Host " 'ATTIVA-GOOGLE-DRIVE' che trovi sul Desktop."
           
           while ($true) {
-              Write-Host "[$(Get-Date)] Runner in esecuzione... (Disco Z: attivo)"
+              Write-Host "[$(Get-Date)] Runner in esecuzione..."
               Start-Sleep -Seconds 300
           }
