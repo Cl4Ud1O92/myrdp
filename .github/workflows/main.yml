@@ -98,6 +98,36 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
+      - name: Install Rclone and WinFsp
+        run: |
+          # WinFsp è necessario per far apparire il Drive come un disco (Z:)
+          choco install rclone winfsp -y
+
+      - name: Configure Rclone
+        run: |
+          $configPath = "$env:USERPROFILE\.config\rclone\rclone.conf"
+          New-Item -ItemType Directory -Force -Path (Split-Path $configPath)
+          # Usiamo il secret che hai appena creato
+          Set-Content -Path $configPath -Value @"
+          ${{ secrets.RCLONE_CONFIG_CONTENT }}
+          "@
+
+      - name: Mount Google Drive
+        run: |
+          # 'cla' è il nome che hai dato nel config [cla]
+          # Usiamo --vfs-cache-mode full per poter leggere/scrivere file pesanti
+          Start-Process rclone -ArgumentList "mount", "cla:", "Z:", "--vfs-cache-mode", "full", "--vfs-cache-max-size", "5G" -WindowStyle Hidden
+          
+          # Aspettiamo che il disco Z: sia visibile
+          $timeout = 30
+          while (!(Test-Path Z:) -and $timeout -gt 0) {
+              Start-Sleep -Seconds 1
+              $timeout--
+          }
+          if (!(Test-Path Z:)) { Write-Error "Disco Z: non trovato"; exit 1 }
+          Write-Host "Google Drive montato con successo su Z:!"
+          
+
       - name: Maintain Connection
         run: |
           Write-Host "`n=== RDP ACCESS ==="
