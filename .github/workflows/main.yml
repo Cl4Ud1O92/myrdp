@@ -1,4 +1,4 @@
-name: RDP-Gdrive-Final-Edition
+name: RDP-Gdrive-Universal-Desktop
 
 on:
   workflow_dispatch:
@@ -31,15 +31,15 @@ jobs:
         run: |
           choco install tailscale rclone winfsp -y
 
-      - name: Configure Rclone for User RDP
+      - name: Configure Rclone Config
         run: |
           $configContent = @"
           ${{ secrets.RCLONE_CONFIG_CONTENT }}
           "@
-          $configPath = "C:\Users\RDP\.config\rclone\rclone.conf"
-          if (!(Test-Path (Split-Path $configPath))) { New-Item -ItemType Directory -Force -Path (Split-Path $configPath) }
-          Set-Content -Path $configPath -Value $configContent
-          icacls $configPath /grant "RDP:(R,W)"
+          # Salviamo il config in una posizione accessibile a tutti
+          $sharedConfigPath = "C:\rclone.conf"
+          Set-Content -Path $sharedConfigPath -Value $configContent
+          icacls $sharedConfigPath /grant "Everyone:(R,W)"
 
       - name: Establish Tailscale Connection
         run: |
@@ -47,47 +47,46 @@ jobs:
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Setup Cloud Mounter on Desktop
+      - name: Setup Cloud Mounter on ALL Desktops
         run: |
-          # FORZIAMO la creazione della cartella Desktop per l'utente RDP
-          $desktopPath = "C:\Users\RDP\Desktop"
-          if (!(Test-Path $desktopPath)) { New-Item -ItemType Directory -Force -Path $desktopPath }
+          # Cerchiamo tutti i desktop presenti nel sistema
+          $userProfiles = Get-ChildItem "C:\Users"
           
-          $batPath = "C:\Users\RDP\Desktop\ATTIVA-GOOGLE-DRIVE.bat"
-          $batContent = @"
+          foreach ($profile in $userProfiles) {
+              $desktopPath = Join-Path $profile.FullName "Desktop"
+              if (Test-Path $desktopPath) {
+                  $batPath = Join-Path $desktopPath "ATTIVA-GOOGLE-DRIVE.bat"
+                  $batContent = @"
           @echo off
           echo ===========================================
           echo AVVIO COLLEGAMENTO GOOGLE DRIVE (Z:)
           echo ===========================================
           taskkill /f /im rclone.exe >nul 2>&1
-          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\Users\RDP\.config\rclone\rclone.conf"
-          echo Attendere 10 secondi per il caricamento...
-          timeout /t 10
+          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone.conf"
+          echo Attendere 15 secondi...
+          timeout /t 15
           if exist Z:\ (
-              echo SUCCESSO! Apertura disco Z...
               explorer Z:
           ) else (
-              echo ERRORE: Il disco Z non e' apparso. Riprova.
+              echo ERRORE: Disco Z non apparso. Controlla i segreti di GitHub.
               pause
           )
           exit
           "@
-          Set-Content -Path $batPath -Value $batContent
-          # Assicuriamoci che l'utente RDP possa vedere il file
-          icacls $batPath /grant "RDP:(F)"
+                  Set-Content -Path $batPath -Value $batContent
+                  icacls $batPath /grant "Everyone:(F)"
+              }
+          }
 
       - name: Maintain Connection
         run: |
           Write-Host "`n==============================="
           Write-Host " ACCESSO RDP PRONTO"
-          Write-Host " IP: $env:TAILSCALE_IP"
-          Write-Host " Utente: RDP"
-          Write-Host " Password: $env:RDP_PASS"
+          Write-Host " IP TAILSCALE: $env:TAILSCALE_IP"
+          Write-Host " PASSWORD: $env:RDP_PASS"
           Write-Host "==============================="
-          Write-Host " Una volta dentro, fai doppio click su 'ATTIVA-GOOGLE-DRIVE' sul Desktop."
+          Write-Host " Cerca il file 'ATTIVA-GOOGLE-DRIVE' sul Desktop e avvialo."
           
           while ($true) {
               Start-Sleep -Seconds 300
-          }
-s 300
           }
