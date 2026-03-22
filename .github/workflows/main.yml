@@ -1,4 +1,4 @@
-name: RDP-Gdrive-Fixed-Final-v3
+name: RDP-Gdrive-Final-Fixed-v4
 
 on:
   workflow_dispatch:
@@ -26,8 +26,10 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
-      - name: Install Tools
-        run: choco install tailscale rclone winfsp -y
+      - name: Install Tools (Tailscale, Rclone, WinFsp, FileZilla)
+        run: |
+          # Installiamo FileZilla tramite choco per evitare il blocco 403
+          choco install tailscale rclone winfsp filezilla -y
 
       - name: Configure Rclone (Safe Path)
         run: |
@@ -41,13 +43,11 @@ jobs:
 
       - name: Establish Tailscale Connection (Identity Force)
         run: |
-          # Il flag --force-reauth e l'hostname fisso servono a mantenere l'IP costante.
-          # Assicurati di usare una Auth Key NON Ephemeral su Tailscale.
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win --accept-routes --force-reauth
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Setup Desktop Tools and Apps
+      - name: Setup Desktop Tools and Links
         run: |
           $userProfiles = Get-ChildItem "C:\Users"
           foreach ($profile in $userProfiles) {
@@ -63,18 +63,11 @@ jobs:
                   $shortcut.TargetPath = "https://antigravity.google/"
                   $shortcut.Save()
 
-                  # 3. FileZilla Portable (Download e link)
-                  $fzDir = "C:\FileZilla"
-                  if (!(Test-Path $fzDir)) { 
-                      New-Item -ItemType Directory -Path $fzDir
-                      Invoke-WebRequest -Uri "https://download.filezilla-project.org/client/FileZilla_3.66.5_win64.zip" -OutFile "$fzDir\fz.zip"
-                      Expand-Archive -Path "$fzDir\fz.zip" -DestinationPath $fzDir -Force
-                  }
+                  # 3. Link a FileZilla (già installato via choco)
                   $fzLnk = $shell.CreateShortcut("$desktopPath\FileZilla.lnk")
-                  $fzLnk.TargetPath = "$fzDir\FileZilla.exe"
+                  $fzLnk.TargetPath = "C:\Program Files\FileZilla FTP Client\filezilla.exe"
                   $fzLnk.Save()
                   
-                  # Permessi totali ai file sul desktop
                   icacls $desktopPath /grant "Everyone:(F)" /T
               }
           }
