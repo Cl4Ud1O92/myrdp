@@ -1,4 +1,4 @@
-name: RDP-Gdrive-Fixed-IP
+name: RDP-Gdrive-Fixed-Machine
 
 on:
   workflow_dispatch:
@@ -24,7 +24,6 @@ jobs:
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
       - name: Install Tools
@@ -37,51 +36,36 @@ jobs:
           $configContent = @"
           ${{ secrets.RCLONE_CONFIG_CONTENT }}
           "@
-          $configPath = Join-Path $rcloneDir "rclone.conf"
-          Set-Content -Path $configPath -Value $configContent
+          Set-Content -Path (Join-Path $rcloneDir "rclone.conf") -Value $configContent
           icacls $rcloneDir /grant "Everyone:(OI)(CI)F" /T
 
-      - name: Establish Tailscale Connection (Fixed Hostname)
+      - name: Establish Tailscale Connection (Identity Fix)
         run: |
-          # Usiamo un hostname fisso. Tailscale assegnerà lo stesso IP a questo nome.
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-fisso --accept-routes
+          # Forziamo il nome 'gh-runner-win' per usare sempre lo stesso slot nel tuo account
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-win --accept-routes --reset
           $tsIP = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Setup Cloud Mounter on ALL Desktops
+      - name: Setup Cloud Mounter on Desktop
         run: |
           $userProfiles = Get-ChildItem "C:\Users"
           foreach ($profile in $userProfiles) {
               $desktopPath = Join-Path $profile.FullName "Desktop"
               if (Test-Path $desktopPath) {
-                  $batPath = Join-Path $desktopPath "ATTIVA-GOOGLE-DRIVE.bat"
                   $batContent = @"
           @echo off
           echo AVVIO GOOGLE DRIVE (Z:)...
           taskkill /f /im rclone.exe >nul 2>&1
-          :: Puntiamo alla cartella sbloccata C:\rclone_data
-          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone_data\rclone.conf" --vfs-cache-max-size 2G
-          echo Attendere 15 secondi per il montaggio...
+          start /b "" "rclone" mount cla: Z: --vfs-cache-mode full --config "C:\rclone_data\rclone.conf"
           timeout /t 15
-          if exist Z:\ ( 
-              echo SUCCESSO! Apertura disco Z...
-              explorer Z: 
-          ) else ( 
-              echo ERRORE: Disco Z non apparso. Riprova.
-              pause 
-          )
+          if exist Z:\ ( explorer Z: ) else ( echo ERRORE: Disco Z non apparso. )
           exit
           "@
-                  Set-Content -Path $batPath -Value $batContent
-                  icacls $batPath /grant "Everyone:(F)"
+                  Set-Content -Path (Join-Path $desktopPath "ATTIVA-GOOGLE-DRIVE.bat") -Value $batContent
               }
           }
 
       - name: Maintain Connection
         run: |
-          Write-Host "`n==============================="
-          Write-Host " INDIRIZZO IP FISSO: $env:TAILSCALE_IP"
-          Write-Host " NOME HOST: gh-runner-fisso"
-          Write-Host " PASSWORD: $env:RDP_PASS"
-          Write-Host "==============================="
-          while ($true) { Start-Sleep -Seconds Aperturara
+          Write-Host "IP: $env:TAILSCALE_IP (Dovrebbe essere sempre lo stesso)"
+          while ($true) { Start-Sleep -Seconds 300 }
